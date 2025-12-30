@@ -16,6 +16,15 @@ local function EnsureCharacterData()
   return AltTrackerDB.characters[key]
 end
 
+local function GetProfessionData(characterData, professionName)
+  characterData.professions[professionName] = characterData.professions[professionName] or {}
+  local professionData = characterData.professions[professionName]
+  if professionData.showInTooltip == nil then
+    professionData.showInTooltip = true
+  end
+  return professionData
+end
+
 local function UpdateProfessionList()
   local characterData = EnsureCharacterData()
   local getProfessions = _G.GetProfessions
@@ -26,9 +35,9 @@ local function UpdateProfessionList()
       if professionID then
         local name, _, rank, maxRank = getProfessionInfo(professionID)
         if name then
-          characterData.professions[name] = characterData.professions[name] or {}
-          characterData.professions[name].rank = rank
-          characterData.professions[name].maxRank = maxRank
+          local professionData = GetProfessionData(characterData, name)
+          professionData.rank = rank
+          professionData.maxRank = maxRank
         end
       end
     end
@@ -44,9 +53,9 @@ local function UpdateProfessionList()
   for skillIndex = 1, getNumSkillLines() do
     local name, isHeader, _, rank, _, _, maxRank, isAbandonable = getSkillLineInfo(skillIndex)
     if name and not isHeader and isAbandonable and maxRank and maxRank > 0 then
-      characterData.professions[name] = characterData.professions[name] or {}
-      characterData.professions[name].rank = rank
-      characterData.professions[name].maxRank = maxRank
+      local professionData = GetProfessionData(characterData, name)
+      professionData.rank = rank
+      professionData.maxRank = maxRank
     end
   end
 end
@@ -110,8 +119,7 @@ local function ScanTradeSkills()
   end
 
   local characterData = EnsureCharacterData()
-  characterData.professions[professionName] = characterData.professions[professionName] or {}
-  local professionData = characterData.professions[professionName]
+  local professionData = GetProfessionData(characterData, professionName)
 
   professionData.rank = rank
   professionData.maxRank = maxRank
@@ -153,7 +161,10 @@ local function AddTooltipInfo(tooltip)
   for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
     local characterName = characterKey:match("^[^-]+") or characterKey
     for professionName, professionData in pairs(characterData.professions or {}) do
-      if professionData.neededItems and professionData.neededItems[itemID] then
+      if professionData.showInTooltip == nil then
+        professionData.showInTooltip = true
+      end
+      if professionData.showInTooltip and professionData.neededItems and professionData.neededItems[itemID] then
         local entry = professionData.neededItems[itemID]
         if type(entry) == "table" and entry.status == "future" then
           tooltip:AddLine(string.format("Will be needed by %s's %s (future recipe)", characterName, professionName), 1, 0.7, 0.2)
@@ -170,6 +181,118 @@ local function AddTooltipInfo(tooltip)
   end
 end
 
+local function ToggleProfessionTooltip(professionName, isChecked)
+  if not professionName then
+    return
+  end
+  local characterData = EnsureCharacterData()
+  local professionData = GetProfessionData(characterData, professionName)
+  professionData.showInTooltip = isChecked and true or false
+end
+
+local function UpdateTradeSkillCheckbox()
+  if not _G.TradeSkillFrame or not _G.TradeSkillFrameTitleText then
+    return
+  end
+
+  local professionName = GetTradeSkillLine()
+  if not professionName then
+    return
+  end
+
+  local characterData = EnsureCharacterData()
+  local professionData = GetProfessionData(characterData, professionName)
+
+  local checkbox = TradeSkillFrame.altTrackerTooltipCheckbox
+  if not checkbox then
+    checkbox = CreateFrame("CheckButton", nil, TradeSkillFrame, "UICheckButtonTemplate")
+    checkbox:SetSize(20, 20)
+    checkbox:SetPoint("LEFT", TradeSkillFrameTitleText, "RIGHT", 4, 0)
+    checkbox:SetScript("OnClick", function(self)
+      ToggleProfessionTooltip(self.professionName, self:GetChecked())
+    end)
+    TradeSkillFrame.altTrackerTooltipCheckbox = checkbox
+  end
+
+  checkbox.professionName = professionName
+  checkbox:SetChecked(professionData.showInTooltip)
+  checkbox:Show()
+end
+
+local function UpdateProfessionsFrameCheckboxes()
+  if not _G.ProfessionsFrame or not ProfessionsFrame.ProfessionList or not ProfessionsFrame.ProfessionList.ScrollBox then
+    return
+  end
+
+  local characterData = EnsureCharacterData()
+  local scrollBox = ProfessionsFrame.ProfessionList.ScrollBox
+  if not scrollBox.ForEachFrame then
+    return
+  end
+
+  scrollBox:ForEachFrame(function(button)
+    local professionName
+    if button.GetData then
+      local data = button:GetData()
+      professionName = data and (data.professionName or data.name)
+    end
+    if not professionName and button.ProfessionName and button.ProfessionName.GetText then
+      professionName = button.ProfessionName:GetText()
+    end
+    if not professionName and button.Name and button.Name.GetText then
+      professionName = button.Name:GetText()
+    end
+    if not professionName and button.Text and button.Text.GetText then
+      professionName = button.Text:GetText()
+    end
+    if not professionName or professionName == "" then
+      return
+    end
+
+    local professionData = GetProfessionData(characterData, professionName)
+    local checkbox = button.altTrackerTooltipCheckbox
+    if not checkbox then
+      checkbox = CreateFrame("CheckButton", nil, button, "UICheckButtonTemplate")
+      checkbox:SetSize(20, 20)
+      checkbox:SetPoint("LEFT", button, "RIGHT", 4, 0)
+      checkbox:SetScript("OnClick", function(self)
+        ToggleProfessionTooltip(self.professionName, self:GetChecked())
+      end)
+      button.altTrackerTooltipCheckbox = checkbox
+    end
+
+    checkbox.professionName = professionName
+    checkbox:SetChecked(professionData.showInTooltip)
+    checkbox:Show()
+  end)
+end
+
+local function UpdateProfessionCheckboxes()
+  SetupProfessionCheckboxHooks()
+  UpdateTradeSkillCheckbox()
+  UpdateProfessionsFrameCheckboxes()
+end
+
+local function SetupProfessionCheckboxHooks()
+  if _G.TradeSkillFrame and not TradeSkillFrame.altTrackerHooked then
+    TradeSkillFrame.altTrackerHooked = true
+    TradeSkillFrame:HookScript("OnShow", UpdateTradeSkillCheckbox)
+  end
+
+  if _G.ProfessionsFrame and not ProfessionsFrame.altTrackerHooked then
+    ProfessionsFrame.altTrackerHooked = true
+    ProfessionsFrame:HookScript("OnShow", UpdateProfessionsFrameCheckboxes)
+    if ProfessionsFrame.ProfessionList then
+      if ProfessionsFrame.ProfessionList.RefreshScrollBox then
+        hooksecurefunc(ProfessionsFrame.ProfessionList, "RefreshScrollBox", UpdateProfessionsFrameCheckboxes)
+      end
+      if ProfessionsFrame.ProfessionList.ScrollBox and ProfessionsFrame.ProfessionList.ScrollBox.RegisterCallback then
+        ProfessionsFrame.ProfessionList.ScrollBox:RegisterCallback("OnScrollRangeChanged", UpdateProfessionsFrameCheckboxes)
+      end
+    end
+  end
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("SKILL_LINES_CHANGED")
@@ -180,9 +303,13 @@ frame:SetScript("OnEvent", function(_, event)
   if event == "PLAYER_LOGIN" then
     UpdateProfessionList()
     GameTooltip:HookScript("OnTooltipSetItem", AddTooltipInfo)
+    SetupProfessionCheckboxHooks()
+    UpdateProfessionCheckboxes()
   elseif event == "SKILL_LINES_CHANGED" then
     UpdateProfessionList()
+    UpdateProfessionCheckboxes()
   elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_UPDATE" then
     ScanTradeSkills()
+    UpdateProfessionCheckboxes()
   end
 end)
