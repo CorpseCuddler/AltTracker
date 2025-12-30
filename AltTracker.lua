@@ -18,11 +18,13 @@ end
 
 local function UpdateProfessionList()
   local characterData = EnsureCharacterData()
-  if type(GetProfessions) == "function" then
-    local professionIDs = { GetProfessions() }
+  local getProfessions = _G.GetProfessions
+  local getProfessionInfo = _G.GetProfessionInfo
+  if type(getProfessions) == "function" and type(getProfessionInfo) == "function" then
+    local professionIDs = { getProfessions() }
     for _, professionID in ipairs(professionIDs) do
       if professionID then
-        local name, _, rank, maxRank = GetProfessionInfo(professionID)
+        local name, _, rank, maxRank = getProfessionInfo(professionID)
         if name then
           characterData.professions[name] = characterData.professions[name] or {}
           characterData.professions[name].rank = rank
@@ -33,12 +35,14 @@ local function UpdateProfessionList()
     return
   end
 
-  if type(GetNumSkillLines) ~= "function" or type(GetSkillLineInfo) ~= "function" then
+  local getNumSkillLines = _G.GetNumSkillLines
+  local getSkillLineInfo = _G.GetSkillLineInfo
+  if type(getNumSkillLines) ~= "function" or type(getSkillLineInfo) ~= "function" then
     return
   end
 
-  for skillIndex = 1, GetNumSkillLines() do
-    local name, isHeader, _, rank, _, _, maxRank, isAbandonable = GetSkillLineInfo(skillIndex)
+  for skillIndex = 1, getNumSkillLines() do
+    local name, isHeader, _, rank, _, _, maxRank, isAbandonable = getSkillLineInfo(skillIndex)
     if name and not isHeader and isAbandonable and maxRank and maxRank > 0 then
       characterData.professions[name] = characterData.professions[name] or {}
       characterData.professions[name].rank = rank
