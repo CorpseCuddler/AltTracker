@@ -151,13 +151,14 @@ local function AddTooltipInfo(tooltip)
 
   local found = false
   for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
+    local characterName = characterKey:match("^[^-]+") or characterKey
     for professionName, professionData in pairs(characterData.professions or {}) do
       if professionData.neededItems and professionData.neededItems[itemID] then
         local entry = professionData.neededItems[itemID]
         if type(entry) == "table" and entry.status == "future" then
-          tooltip:AddLine(string.format("Will be needed by %s's %s (future recipe)", characterKey, professionName), 1, 0.7, 0.2)
+          tooltip:AddLine(string.format("Will be needed by %s's %s (future recipe)", characterName, professionName), 1, 0.7, 0.2)
         else
-          tooltip:AddLine(string.format("Needed by %s's %s", characterKey, professionName), 0.2, 1, 0.2)
+          tooltip:AddLine(string.format("Needed by %s's %s", characterName, professionName), 0.2, 1, 0.2)
         end
         found = true
       end
