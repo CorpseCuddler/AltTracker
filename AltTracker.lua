@@ -78,6 +78,37 @@ local function ScanTradeSkills()
     return "usable"
   end
 
+  local function IsRecipeSkillUpEligible(skillIndex, skillType)
+    if skillType == "header" then
+      return false
+    end
+
+    local recipeInfo
+    if C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then
+      recipeInfo = C_TradeSkillUI.GetRecipeInfo(skillIndex)
+    end
+
+    local difficulty = recipeInfo and recipeInfo.difficulty or skillType
+    if difficulty == "trivial" then
+      return false
+    end
+
+    if recipeInfo then
+      local skillUps = recipeInfo.numSkillUps
+      if skillUps == nil then
+        skillUps = recipeInfo.skillUps
+      end
+      if skillUps == nil then
+        skillUps = recipeInfo.skillUp
+      end
+      if skillUps == 0 then
+        return false
+      end
+    end
+
+    return true
+  end
+
   local characterData = EnsureCharacterData()
   characterData.professions[professionName] = characterData.professions[professionName] or {}
   local professionData = characterData.professions[professionName]
@@ -89,7 +120,7 @@ local function ScanTradeSkills()
   for skillIndex = 1, GetNumTradeSkills() do
     local _, skillType = GetTradeSkillInfo(skillIndex)
     local status = GetRecipeStatus(skillIndex, skillType)
-    if status then
+    if status and IsRecipeSkillUpEligible(skillIndex, skillType) then
       local reagentCount = GetTradeSkillNumReagents(skillIndex)
       for reagentIndex = 1, reagentCount do
         local reagentLink = GetTradeSkillReagentItemLink(skillIndex, reagentIndex)
