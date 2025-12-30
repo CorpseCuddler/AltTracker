@@ -37,6 +37,27 @@ local function ScanTradeSkills()
     return
   end
 
+  local function GetRecipeStatus(skillIndex, skillType)
+    if skillType == "header" then
+      return nil
+    end
+
+    if C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then
+      local recipeInfo = C_TradeSkillUI.GetRecipeInfo(skillIndex)
+      if recipeInfo then
+        if recipeInfo.learned == false or recipeInfo.available == false or recipeInfo.disabled then
+          return "future"
+        end
+      end
+    end
+
+    if skillType == "unavailable" then
+      return "future"
+    end
+
+    return "usable"
+  end
+
   local characterData = EnsureCharacterData()
   characterData.professions[professionName] = characterData.professions[professionName] or {}
   local professionData = characterData.professions[professionName]
@@ -47,14 +68,18 @@ local function ScanTradeSkills()
 
   for skillIndex = 1, GetNumTradeSkills() do
     local _, skillType = GetTradeSkillInfo(skillIndex)
-    if skillType and skillType ~= "header" and skillType ~= "trivial" then
+    local status = GetRecipeStatus(skillIndex, skillType)
+    if status then
       local reagentCount = GetTradeSkillNumReagents(skillIndex)
       for reagentIndex = 1, reagentCount do
         local reagentLink = GetTradeSkillReagentItemLink(skillIndex, reagentIndex)
         if reagentLink then
           local itemID = tonumber(reagentLink:match("item:(%d+)"))
           if itemID then
-            professionData.neededItems[itemID] = true
+            local existing = professionData.neededItems[itemID]
+            if not existing or (existing.status == "future" and status == "usable") then
+              professionData.neededItems[itemID] = { status = status }
+            end
           end
         end
       end
@@ -77,7 +102,12 @@ local function AddTooltipInfo(tooltip)
   for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
     for professionName, professionData in pairs(characterData.professions or {}) do
       if professionData.neededItems and professionData.neededItems[itemID] then
-        tooltip:AddLine(string.format("Needed by %s's %s", characterKey, professionName), 0.2, 1, 0.2)
+        local entry = professionData.neededItems[itemID]
+        if type(entry) == "table" and entry.status == "future" then
+          tooltip:AddLine(string.format("Will be needed by %s's %s (future recipe)", characterKey, professionName), 1, 0.7, 0.2)
+        else
+          tooltip:AddLine(string.format("Needed by %s's %s", characterKey, professionName), 0.2, 1, 0.2)
+        end
         found = true
       end
     end
