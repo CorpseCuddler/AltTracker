@@ -5,6 +5,9 @@ AltTrackerDB = AltTrackerDB or {}
 AltTrackerDB.characters = AltTrackerDB.characters or {}
 AltTrackerDB.realm = AltTrackerDB.realm or {}
 
+-- Forward declaration (options UI defined later)
+local CreateOptionsPanel
+
 -- Extended DB:
 --  AltTrackerDB.characters[ "Name-Realm" ] = { professions = {...}, neededItems = {...}, bags = {...}, bank = {...}, money = <copper>, name = "Name" }
 --  AltTrackerDB.realm[ "Realm" ] = { counts = {...}, lastScan = 0 }
@@ -33,6 +36,8 @@ local function EnsureCharacterData()
   cd.bank = cd.bank or {}
   cd.name = cd.name or (UnitName("player") or "Unknown")
   cd.money = tonumber(cd.money) or 0
+  cd.enabled = (cd.enabled ~= false)
+  cd.profFilter = cd.profFilter or {}
   return cd
 end
 
@@ -92,11 +97,15 @@ local function GetAllAltMoney()
   local list = {}
   local total = 0
   for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
+    if characterData and characterData.enabled == false then
+      -- skip
+    else
     local name = characterData.name or (characterKey:match("^[^-]+") or characterKey)
     local m = tonumber(characterData.money) or 0
     if m > 0 then
       total = total + m
       list[#list + 1] = { name = name, money = m }
+    end
     end
   end
   table.sort(list, function(a, b)
@@ -166,6 +175,8 @@ local function UpdateProfessionList()
           characterData.professions[name] = characterData.professions[name] or {}
           characterData.professions[name].rank = rank
           characterData.professions[name].maxRank = maxRank
+      if characterData.profFilter[name] == nil then characterData.profFilter[name] = true end
+          if characterData.profFilter[name] == nil then characterData.profFilter[name] = true end
         end
       end
     end
@@ -245,6 +256,8 @@ local function ScanTradeSkills()
   local characterData = EnsureCharacterData()
   characterData.professions[professionName] = characterData.professions[professionName] or {}
   local professionData = characterData.professions[professionName]
+
+  if characterData.profFilter[professionName] == nil then characterData.profFilter[professionName] = true end
 
   professionData.rank = rank
   professionData.maxRank = maxRank
@@ -353,6 +366,9 @@ local function BuildAltCountLines(itemID)
   local altsTotal = 0
 
   for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
+    if characterData and characterData.enabled == false then
+      -- skip
+    else
     local name = characterData.name or (characterKey:match("^[^-]+") or characterKey)
     local bags = (characterData.bags and characterData.bags[itemID]) or 0
     local bank = (characterData.bank and characterData.bank[itemID]) or 0
@@ -360,6 +376,7 @@ local function BuildAltCountLines(itemID)
     if total > 0 then
       altsTotal = altsTotal + total
       lines[#lines + 1] = { name = name, total = total, bags = bags, bank = bank }
+    end
     end
   end
 
@@ -384,9 +401,15 @@ local function AddTooltipInfo(tooltip)
 
   -- Profession-needed lines
   for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
-    local characterName = characterData.name or (characterKey:match("^[^-]+") or characterKey)
+    if characterData and characterData.enabled == false then
+      -- skip
+    else
+      local characterName = characterData.name or (characterKey:match("^[^-]+") or characterKey)
     for professionName, professionData in pairs(characterData.professions or {}) do
-      if professionData.neededItems and professionData.neededItems[itemID] then
+      if characterData.profFilter and characterData.profFilter[professionName] == false then
+        -- skip profession
+      else
+        if professionData.neededItems and professionData.neededItems[itemID] then
         local entry = professionData.neededItems[itemID]
         if type(entry) == "table" and entry.status == "future" then
           tooltip:AddLine(string.format("Will be needed by %s's %s (future recipe)", characterName, professionName), 1, 0.7, 0.2)
@@ -395,7 +418,9 @@ local function AddTooltipInfo(tooltip)
         end
         foundProf = true
       end
+      end
     end
+  end
   end
 
   local altLines, altsTotal = BuildAltCountLines(itemID)
@@ -485,6 +510,10 @@ frame:SetScript("OnEvent", function(_, event)
     RequestBagScan()
     StoreMyMoney()
     HookGoldFrame()
+    if not _G.ALTTRACKER_OPTIONS_INIT then
+      _G.ALTTRACKER_OPTIONS_INIT = true
+      CreateOptionsPanel()
+    end
     return
   end
 
@@ -527,3 +556,206 @@ frame:SetScript("OnEvent", function(_, event)
     return
   end
 end)
+
+
+------------------------------------------------------------
+-- Options UI (Interface Options) - per character toggles, profession filters, purge
+------------------------------------------------------------
+local function SortedCharacterKeys()
+  local keys = {}
+  for k in pairs(AltTrackerDB.characters or {}) do
+    keys[#keys + 1] = k
+  end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  return keys
+end
+
+local function CharDisplayName(key, cd)
+  if cd and cd.name then return cd.name end
+  return (key and key:match("^[^-]+")) or tostring(key or "?")
+end
+
+local function PurgeCharacter(key)
+  if not key then return end
+  AltTrackerDB.characters[key] = nil
+end
+
+CreateOptionsPanel = function()
+  local panel = CreateFrame("Frame", "AltTrackerOptionsPanel", _G.InterfaceOptionsFramePanelContainer or _G.InterfaceOptionsFrame)
+  panel.name = "AltTracker"
+
+  local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+  title:SetPoint("TOPLEFT", 16, -16)
+  title:SetText("AltTracker")
+
+  local sub = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+  sub:SetText("Choose which characters and professions are tracked, or purge old character data.")
+
+  -- Dropdown label
+  local ddLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+  ddLabel:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", 0, -18)
+  ddLabel:SetText("Character")
+
+  local dropdown = CreateFrame("Frame", "AltTrackerCharDropdown", panel, "UIDropDownMenuTemplate")
+  dropdown:SetPoint("TOPLEFT", ddLabel, "BOTTOMLEFT", -16, -4)
+
+  local enabledCB = CreateFrame("CheckButton", "AltTrackerEnableCB", panel, "InterfaceOptionsCheckButtonTemplate")
+  enabledCB:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 20, -10)
+  _G[enabledCB:GetName().."Text"]:SetText("Enable tracking for this character (items + professions + gold)")
+
+  local profHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+  profHeader:SetPoint("TOPLEFT", enabledCB, "BOTTOMLEFT", 0, -12)
+  profHeader:SetText("Tracked professions for this character")
+
+  local profChecks = {}
+  for i = 1, 12 do
+    local cb = CreateFrame("CheckButton", "AltTrackerProfCB"..i, panel, "InterfaceOptionsCheckButtonTemplate")
+    local col = (i > 6) and 1 or 0
+    local row = ((i - 1) % 6)
+    cb:SetPoint("TOPLEFT", profHeader, "BOTTOMLEFT", col * 240, -8 - row * 22)
+    cb:Hide()
+    profChecks[i] = cb
+  end
+
+  local purgeBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  purgeBtn:SetSize(140, 22)
+  purgeBtn:SetPoint("TOPLEFT", profHeader, "BOTTOMLEFT", 0, -150)
+  purgeBtn:SetText("Purge character...")
+
+  local confirmText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  confirmText:SetPoint("TOPLEFT", purgeBtn, "BOTTOMLEFT", 0, -6)
+  confirmText:SetText("Purging deletes saved items, bank, professions, and gold for that character.")
+
+  local selectedKey = nil
+
+  local function RefreshProfessionChecks()
+    for i = 1, #profChecks do profChecks[i]:Hide() end
+    if not selectedKey then return end
+    local cd = AltTrackerDB.characters[selectedKey]
+    if not cd then return end
+
+    local profNames = {}
+    for pname in pairs(cd.professions or {}) do
+      profNames[#profNames + 1] = pname
+    end
+    table.sort(profNames)
+
+    for i = 1, math.min(#profNames, #profChecks) do
+      local pname = profNames[i]
+      local cb = profChecks[i]
+      _G[cb:GetName().."Text"]:SetText(pname)
+      cb:SetChecked(cd.profFilter and cd.profFilter[pname] ~= false)
+      cb:SetScript("OnClick", function(self)
+        cd.profFilter = cd.profFilter or {}
+        cd.profFilter[pname] = self:GetChecked() and true or false
+      end)
+      cb:Show()
+    end
+  end
+
+  local function RefreshCharacterUI()
+    if not selectedKey then return end
+    local cd = AltTrackerDB.characters[selectedKey]
+    if not cd then return end
+    enabledCB:SetChecked(cd.enabled ~= false)
+    RefreshProfessionChecks()
+  end
+
+  enabledCB:SetScript("OnClick", function(self)
+    if not selectedKey then return end
+    local cd = AltTrackerDB.characters[selectedKey]
+    if not cd then return end
+    cd.enabled = self:GetChecked() and true or false
+  end)
+
+  purgeBtn:SetScript("OnClick", function()
+    if not selectedKey then return end
+    local cd = AltTrackerDB.characters[selectedKey]
+    if not cd then return end
+    local name = CharDisplayName(selectedKey, cd)
+
+    StaticPopupDialogs["ALTTRACKER_PURGE_CHAR"] = {
+      text = "Purge ALL AltTracker data for |cffffd200" .. name .. "|r?\n\nThis will permanently delete:\n  • Profession tracking + needed items\n  • Bag + bank item counts\n  • Gold totals\n\nThis cannot be undone.",
+      button1 = "Purge",
+      button2 = CANCEL,
+      OnAccept = function()
+        PurgeCharacter(selectedKey)
+        selectedKey = nil
+        UIDropDownMenu_SetText(dropdown, "(select a character)")
+        enabledCB:SetChecked(false)
+        for i = 1, #profChecks do profChecks[i]:Hide() end
+        -- rebuild dropdown list
+        UIDropDownMenu_Initialize(dropdown, dropdown.initialize)
+        UIDropDownMenu_SetWidth(dropdown, 180)
+        UIDropDownMenu_SetText(dropdown, "(select a character)")
+      end,
+      timeout = 0,
+      whileDead = 1,
+      hideOnEscape = 1,
+      preferredIndex = 3,
+    }
+    StaticPopup_Show("ALTTRACKER_PURGE_CHAR")
+  end)
+
+  local function SetSelected(key)
+    selectedKey = key
+    local cd = AltTrackerDB.characters[selectedKey]
+    local name = cd and CharDisplayName(selectedKey, cd) or "(unknown)"
+    UIDropDownMenu_SetText(dropdown, name)
+    RefreshCharacterUI()
+  end
+
+  local function InitializeDropdown(self, level)
+    local keys = SortedCharacterKeys()
+    if #keys == 0 then
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = "(no saved characters)"
+      info.notCheckable = true
+      UIDropDownMenu_AddButton(info, level)
+      return
+    end
+
+    for _, key in ipairs(keys) do
+      local cd = AltTrackerDB.characters[key]
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = CharDisplayName(key, cd)
+      info.notCheckable = true
+      info.func = function() SetSelected(key) end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end
+
+  dropdown.initialize = InitializeDropdown
+  UIDropDownMenu_Initialize(dropdown, InitializeDropdown)
+  UIDropDownMenu_SetWidth(dropdown, 180)
+  UIDropDownMenu_SetText(dropdown, "(select a character)")
+
+  panel.refresh = function()
+    -- Called when the panel is shown
+    UIDropDownMenu_Initialize(dropdown, InitializeDropdown)
+    if selectedKey and AltTrackerDB.characters[selectedKey] then
+      RefreshCharacterUI()
+    end
+  end
+
+  InterfaceOptions_AddCategory(panel)
+end
+
+-- Slash commands to open config
+local function OpenAltTrackerConfig()
+  -- InterfaceOptionsFrame_OpenToCategory is quirky in 3.3.5; calling twice helps.
+  if InterfaceOptionsFrame then
+    InterfaceOptionsFrame_Show()
+  end
+  InterfaceOptionsFrame_OpenToCategory("AltTracker")
+  InterfaceOptionsFrame_OpenToCategory("AltTracker")
+end
+
+SLASH_ALTTRACKER1 = "/alttracker"
+SLASH_ALTTRACKER2 = "/at"
+SlashCmdList["ALTTRACKER"] = function()
+  OpenAltTrackerConfig()
+end
+
+
