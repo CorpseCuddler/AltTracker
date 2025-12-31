@@ -64,6 +64,132 @@ local function WipeTable(t)
 end
 
 ------------------------------------------------------------
+-- NEW: Gold tracking + tooltip on the bag gold display
+------------------------------------------------------------
+local function FormatMoney(copper)
+  copper = tonumber(copper) or 0
+  if type(_G.GetCoinTextureString) == "function" then
+    return _G.GetCoinTextureString(copper)
+  end
+  -- Fallback: simple g/s/c
+  local g = math.floor(copper / 10000)
+  local s = math.floor((copper % 10000) / 100)
+  local c = math.floor(copper % 100)
+  return string.format("%dg %ds %dc", g, s, c)
+end
+
+local pendingMoney, moneyAt = false, 0
+local function StoreMyMoney()
+  local cd = EnsureCharacterData()
+  cd.money = GetMoney() or 0
+end
+
+local function RequestMoneyStore()
+  pendingMoney = true
+  moneyAt = GetTime() + 0.20
+end
+
+local function GetAllAltMoney()
+  local list = {}
+  local total = 0
+  for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
+    local name = characterData.name or (characterKey:match("^[^-]+") or characterKey)
+    local m = tonumber(characterData.money) or 0
+    if m > 0 then
+      total = total + m
+      list[#list + 1] = { name = name, money = m }
+    end
+  end
+  table.sort(list, function(a,b)
+    if a.money == b.money then return a.name < b.name end
+    return a.money > b.money
+  end)
+  return list, total
+end
+
+local function ShowGoldTooltip(owner)
+  local tip = GameTooltip
+  tip:SetOwner(owner, "ANCHOR_TOPLEFT")
+  tip:ClearLines()
+  tip:AddLine("AltTracker Gold", 1, 1, 1)
+
+  local list, total = GetAllAltMoney()
+  tip:AddDoubleLine("Total:", FormatMoney(total), 1, 1, 1, 0.8, 0.8, 0.8)
+
+  for i = 1, math.min(#list, 30) do
+    tip:AddDoubleLine(list[i].name .. ":", FormatMoney(list[i].money), 0.75,0.75,0.75, 0.75,0.75,0.75)
+  end
+  tip:Show()
+end
+
+local function HookGoldFrame()
+  -- AdiBags splits coins into separate hover buttons; hook all that exist.
+  local adibagsButtons = {
+    _G.AdiBagsMoneyFrameGoldButton,
+    _G.AdiBagsMoneyFrameSilverButton,
+    _G.AdiBagsMoneyFrameCopperButton,
+  }
+
+  local function HookOne(f)
+    if not f or f.AltTrackerGoldHooked then return end
+    if f.EnableMouse then f:EnableMouse(true) end
+    if f.HookScript then
+      f:HookScript("OnEnter", function(self) ShowGoldTooltip(self) end)
+      f:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    else
+      f:SetScript("OnEnter", function(self) ShowGoldTooltip(self) end)
+      f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    f.AltTrackerGoldHooked = true
+  end
+
+  local hookedAny = false
+  for _, f in ipairs(adibagsButtons) do
+    if f then
+      HookOne(f)
+      hookedAny = true
+    end
+  end
+  if hookedAny then return end
+
+  -- Fall back to other common money frames (non-AdiBags)
+  local candidates = {
+    _G.AdiBagsMoneyFrame,
+    _G.BackpackMoneyFrame,
+    _G.MainMenuBarBackpackButtonMoneyFrame,
+    _G.MainMenuBarMoneyFrame,
+  }
+
+  for _, f in ipairs(candidates) do
+    if f then
+      HookOne(f)
+      return
+    end
+  end
+end
+
+      if f.HookScript then
+        f:HookScript("OnEnter", function(self) ShowGoldTooltip(self) end)
+        f:HookScript("OnLeave", function() GameTooltip:Hide() end)
+      else
+        f:SetScript("OnEnter", function(self) ShowGoldTooltip(self) end)
+        f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      end
+
+      f.AltTrackerGoldHooked = true
+      return
+    end
+  end
+end
+
+  f:EnableMouse(true)
+  f:HookScript("OnEnter", function(self) ShowGoldTooltip(self) end)
+  f:HookScript("OnLeave", function() GameTooltip:Hide() end)
+  f.AltTrackerGoldHooked = true
+end
+
+
+------------------------------------------------------------
 -- Profession tracking (original AltTracker logic)
 ------------------------------------------------------------
 local function UpdateProfessionList()
@@ -331,6 +457,7 @@ local function AddTooltipInfo(tooltip)
   if foundProf or #altLines > 0 or realmBank > 0 then
     tooltip:AddLine(" ")
     tooltip:AddDoubleLine("AltTracker:", string.format("%d item(s) total", grandTotal), 1, 1, 1, 0.8, 0.8, 0.8)
+    tooltip:AddDoubleLine("  (Alts + Realm Bank):", string.format("%d + %d", (tonumber(altsTotal) or 0), (tonumber(realmBank) or 0)), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
     if realmBank > 0 then
       tooltip:AddDoubleLine("Realm Bank:", tostring(realmBank), 0.3, 0.8, 1.0, 0.3, 0.8, 1.0)
     end
@@ -366,6 +493,7 @@ frame:RegisterEvent("GUILDBANKFRAME_OPENED")
 frame:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
 frame:RegisterEvent("GUILDBANK_UPDATE_TABS")
 frame:RegisterEvent("GUILDBANK_ITEM_LOCK_CHANGED")
+frame:RegisterEvent("PLAYER_MONEY")
 
 -- Simple throttles
 local pendingBagScan, bagScanAt = false, 0
@@ -390,6 +518,10 @@ frame:SetScript("OnUpdate", function()
     pendingRealmScan = false
     ScanRealmBank()
   end
+  if pendingMoney and GetTime() >= moneyAt then
+    pendingMoney = false
+    StoreMyMoney()
+  end
 end)
 
 frame:SetScript("OnEvent", function(_, event)
@@ -397,6 +529,8 @@ frame:SetScript("OnEvent", function(_, event)
     UpdateProfessionList()
     GameTooltip:HookScript("OnTooltipSetItem", AddTooltipInfo)
     RequestBagScan()
+    StoreMyMoney()
+    HookGoldFrame()
     return
   end
 
@@ -412,6 +546,12 @@ frame:SetScript("OnEvent", function(_, event)
 
   if event == "BAG_UPDATE" then
     RequestBagScan()
+    return
+  end
+
+  if event == "PLAYER_MONEY" then
+    RequestMoneyStore()
+    HookGoldFrame()
     return
   end
 
