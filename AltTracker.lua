@@ -6,7 +6,7 @@ AltTrackerDB.characters = AltTrackerDB.characters or {}
 AltTrackerDB.realm = AltTrackerDB.realm or {}
 
 -- Extended DB:
---  AltTrackerDB.characters[ "Name-Realm" ] = { professions = {...}, bags = {...}, bank = {...}, name = "Name" }
+--  AltTrackerDB.characters[ "Name-Realm" ] = { professions = {...}, neededItems = {...}, bags = {...}, bank = {...}, money = <copper>, name = "Name" }
 --  AltTrackerDB.realm[ "Realm" ] = { counts = {...}, lastScan = 0 }
 
 ------------------------------------------------------------
@@ -25,20 +25,19 @@ end
 local function EnsureCharacterData()
   local key = GetCharacterKey()
   if not AltTrackerDB.characters[key] then
-    AltTrackerDB.characters[key] = { professions = {}, bags = {}, bank = {}, name = (UnitName("player") or "Unknown") }
+    AltTrackerDB.characters[key] = { professions = {}, bags = {}, bank = {}, name = (UnitName("player") or "Unknown"), money = 0 }
   end
   local cd = AltTrackerDB.characters[key]
   cd.professions = cd.professions or {}
   cd.bags = cd.bags or {}
   cd.bank = cd.bank or {}
   cd.name = cd.name or (UnitName("player") or "Unknown")
+  cd.money = tonumber(cd.money) or 0
   return cd
 end
 
 local function EnsureRealmData()
-  -- Ensure tables exist even if SavedVariables were created by older versions
   AltTrackerDB.realm = AltTrackerDB.realm or {}
-
   local rk = RealmKey()
   AltTrackerDB.realm[rk] = AltTrackerDB.realm[rk] or { counts = {}, lastScan = 0 }
   local rd = AltTrackerDB.realm[rk]
@@ -61,6 +60,94 @@ end
 
 local function WipeTable(t)
   for k in pairs(t) do t[k] = nil end
+end
+
+------------------------------------------------------------
+-- Gold tracking + tooltip on the bag gold display (AdiBags + fallback)
+------------------------------------------------------------
+local function FormatMoney(copper)
+  copper = tonumber(copper) or 0
+  if type(_G.GetCoinTextureString) == "function" then
+    return _G.GetCoinTextureString(copper)
+  end
+  local g = math.floor(copper / 10000)
+  local s = math.floor((copper % 10000) / 100)
+  local c = math.floor(copper % 100)
+  return string.format("%dg %ds %dc", g, s, c)
+end
+
+local pendingMoney, moneyAt = false, 0
+
+local function StoreMyMoney()
+  local cd = EnsureCharacterData()
+  cd.money = GetMoney() or 0
+end
+
+local function RequestMoneyStore()
+  pendingMoney = true
+  moneyAt = GetTime() + 0.20
+end
+
+local function GetAllAltMoney()
+  local list = {}
+  local total = 0
+  for characterKey, characterData in pairs(AltTrackerDB.characters or {}) do
+    local name = characterData.name or (characterKey:match("^[^-]+") or characterKey)
+    local m = tonumber(characterData.money) or 0
+    if m > 0 then
+      total = total + m
+      list[#list + 1] = { name = name, money = m }
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.money == b.money then return a.name < b.name end
+    return a.money > b.money
+  end)
+  return list, total
+end
+
+local function ShowGoldTooltip(owner)
+  local tip = GameTooltip
+  tip:SetOwner(owner, "ANCHOR_TOPLEFT")
+  tip:ClearLines()
+  tip:AddLine("AltTracker Gold", 1, 1, 1)
+
+  local list, total = GetAllAltMoney()
+  tip:AddDoubleLine("Total:", FormatMoney(total), 1, 1, 1, 0.8, 0.8, 0.8)
+
+  for i = 1, math.min(#list, 30) do
+    tip:AddDoubleLine(list[i].name .. ":", FormatMoney(list[i].money), 0.75, 0.75, 0.75, 0.75, 0.75, 0.75)
+  end
+  tip:Show()
+end
+
+local function HookGoldFrame()
+  local function HookOne(f)
+    if not f or f.AltTrackerGoldHooked then return false end
+    if f.EnableMouse then f:EnableMouse(true) end
+    if f.HookScript then
+      f:HookScript("OnEnter", function(self) ShowGoldTooltip(self) end)
+      f:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    else
+      f:SetScript("OnEnter", function(self) ShowGoldTooltip(self) end)
+      f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    f.AltTrackerGoldHooked = true
+    return true
+  end
+
+  -- AdiBags coins (hook all that exist)
+  local hookedAny = false
+  hookedAny = HookOne(_G.AdiBagsMoneyFrameGoldButton) or hookedAny
+  hookedAny = HookOne(_G.AdiBagsMoneyFrameSilverButton) or hookedAny
+  hookedAny = HookOne(_G.AdiBagsMoneyFrameCopperButton) or hookedAny
+  if hookedAny then return end
+
+  -- Fallback money frames
+  HookOne(_G.AdiBagsMoneyFrame)
+  HookOne(_G.BackpackMoneyFrame)
+  HookOne(_G.MainMenuBarBackpackButtonMoneyFrame)
+  HookOne(_G.MainMenuBarMoneyFrame)
 end
 
 ------------------------------------------------------------
@@ -145,12 +232,8 @@ local function ScanTradeSkills()
 
     if recipeInfo then
       local skillUps = recipeInfo.numSkillUps
-      if skillUps == nil then
-        skillUps = recipeInfo.skillUps
-      end
-      if skillUps == nil then
-        skillUps = recipeInfo.skillUp
-      end
+      if skillUps == nil then skillUps = recipeInfo.skillUps end
+      if skillUps == nil then skillUps = recipeInfo.skillUp end
       if skillUps == 0 then
         return false
       end
@@ -189,7 +272,7 @@ local function ScanTradeSkills()
 end
 
 ------------------------------------------------------------
--- NEW: Per-character bag + bank item counts (for alt totals)
+-- Per-character bag + bank item counts (for alt totals)
 ------------------------------------------------------------
 local function ScanBags()
   local cd = EnsureCharacterData()
@@ -209,13 +292,11 @@ local function ScanBags()
 end
 
 local function ScanBank()
-  -- Only accurate while bank is open.
   if not BankFrame or not BankFrame:IsShown() then return end
 
   local cd = EnsureCharacterData()
   WipeTable(cd.bank)
 
-  -- Main bank slots
   for slot = 1, (NUM_BANKGENERIC_SLOTS or 28) do
     local link = GetContainerItemLink(BANK_CONTAINER, slot)
     if link then
@@ -225,7 +306,6 @@ local function ScanBank()
     end
   end
 
-  -- Bank bag slots (5..11)
   for bag = (NUM_BAG_SLOTS or 4) + 1, (NUM_BAG_SLOTS or 4) + (NUM_BANKBAGSLOTS or 7) do
     local slots = GetContainerNumSlots(bag) or 0
     for slot = 1, slots do
@@ -240,7 +320,7 @@ local function ScanBank()
 end
 
 ------------------------------------------------------------
--- NEW: Realm Bank (Ascension Realm Bank uses GuildBankFrame)
+-- Realm Bank (Ascension Realm Bank uses GuildBankFrame)
 ------------------------------------------------------------
 local function ScanRealmBank()
   if not GuildBankFrame or not GuildBankFrame:IsShown() then return end
@@ -266,7 +346,7 @@ local function ScanRealmBank()
 end
 
 ------------------------------------------------------------
--- Tooltip: professions + alt totals + realm bank + grand total
+-- Tooltip: professions + realm bank + alts (sorted) + spacer
 ------------------------------------------------------------
 local function BuildAltCountLines(itemID)
   local lines = {}
@@ -318,23 +398,22 @@ local function AddTooltipInfo(tooltip)
     end
   end
 
-  -- Alt inventory section (sorted by item count)
   local altLines, altsTotal = BuildAltCountLines(itemID)
 
-  -- Realm bank count
   local rd = EnsureRealmData()
-  local realmBank = (rd.counts and rd.counts[itemID]) or 0
-  realmBank = tonumber(realmBank) or 0
-
+  local realmBank = tonumber((rd.counts and rd.counts[itemID]) or 0) or 0
   local grandTotal = (tonumber(altsTotal) or 0) + realmBank
 
   if foundProf or #altLines > 0 or realmBank > 0 then
     tooltip:AddLine(" ")
     tooltip:AddDoubleLine("AltTracker:", string.format("%d item(s) total", grandTotal), 1, 1, 1, 0.8, 0.8, 0.8)
+    tooltip:AddDoubleLine("  (Alts + Realm Bank):", string.format("%d + %d", (tonumber(altsTotal) or 0), realmBank), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+
     if realmBank > 0 then
       tooltip:AddDoubleLine("Realm Bank:", tostring(realmBank), 0.3, 0.8, 1.0, 0.3, 0.8, 1.0)
     end
-for i = 1, math.min(#altLines, 20) do
+
+    for i = 1, math.min(#altLines, 20) do
       local a = altLines[i]
       tooltip:AddDoubleLine(
         "  " .. a.name .. ":",
@@ -343,8 +422,9 @@ for i = 1, math.min(#altLines, 20) do
         0.75, 0.75, 0.75
       )
     end
-    tooltip:AddLine(" ")
 
+    -- Spacer after AltTracker block (keeps distance from ItemLevel, etc.)
+    tooltip:AddLine(" ")
     tooltip:Show()
   end
 end
@@ -366,6 +446,7 @@ frame:RegisterEvent("GUILDBANKFRAME_OPENED")
 frame:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
 frame:RegisterEvent("GUILDBANK_UPDATE_TABS")
 frame:RegisterEvent("GUILDBANK_ITEM_LOCK_CHANGED")
+frame:RegisterEvent("PLAYER_MONEY")
 
 -- Simple throttles
 local pendingBagScan, bagScanAt = false, 0
@@ -390,13 +471,20 @@ frame:SetScript("OnUpdate", function()
     pendingRealmScan = false
     ScanRealmBank()
   end
+  if pendingMoney and GetTime() >= moneyAt then
+    pendingMoney = false
+    StoreMyMoney()
+  end
 end)
 
 frame:SetScript("OnEvent", function(_, event)
   if event == "PLAYER_LOGIN" then
     UpdateProfessionList()
     GameTooltip:HookScript("OnTooltipSetItem", AddTooltipInfo)
+
     RequestBagScan()
+    StoreMyMoney()
+    HookGoldFrame()
     return
   end
 
@@ -412,6 +500,12 @@ frame:SetScript("OnEvent", function(_, event)
 
   if event == "BAG_UPDATE" then
     RequestBagScan()
+    return
+  end
+
+  if event == "PLAYER_MONEY" then
+    RequestMoneyStore()
+    HookGoldFrame()
     return
   end
 
