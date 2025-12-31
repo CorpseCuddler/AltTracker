@@ -435,7 +435,6 @@ local function AddTooltipInfo(tooltip)
   if foundProf or #altLines > 0 or realmBank > 0 then
     tooltip:AddLine(" ")
     tooltip:AddDoubleLine("AltTracker:", string.format("%d item(s) total", grandTotal), 1, 1, 1, 0.8, 0.8, 0.8)
-    tooltip:AddDoubleLine("  (Alts + Realm Bank):", string.format("%d + %d", (tonumber(altsTotal) or 0), realmBank), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
 
     if realmBank > 0 then
       tooltip:AddDoubleLine("Realm Bank:", tostring(realmBank), 0.3, 0.8, 1.0, 0.3, 0.8, 1.0)
