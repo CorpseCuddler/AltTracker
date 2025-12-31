@@ -145,18 +145,21 @@ local function HookGoldFrame()
     return true
   end
 
-  -- AdiBags coins (hook all that exist)
   local hookedAny = false
+
+  -- AdiBags coins (hook all that exist)
   hookedAny = HookOne(_G.AdiBagsMoneyFrameGoldButton) or hookedAny
   hookedAny = HookOne(_G.AdiBagsMoneyFrameSilverButton) or hookedAny
   hookedAny = HookOne(_G.AdiBagsMoneyFrameCopperButton) or hookedAny
-  if hookedAny then return end
+  if hookedAny then return true end
 
   -- Fallback money frames
-  HookOne(_G.AdiBagsMoneyFrame)
-  HookOne(_G.BackpackMoneyFrame)
-  HookOne(_G.MainMenuBarBackpackButtonMoneyFrame)
-  HookOne(_G.MainMenuBarMoneyFrame)
+  hookedAny = HookOne(_G.AdiBagsMoneyFrame) or hookedAny
+  hookedAny = HookOne(_G.BackpackMoneyFrame) or hookedAny
+  hookedAny = HookOne(_G.MainMenuBarBackpackButtonMoneyFrame) or hookedAny
+  hookedAny = HookOne(_G.MainMenuBarMoneyFrame) or hookedAny
+
+  return hookedAny
 end
 
 ------------------------------------------------------------
@@ -472,10 +475,13 @@ frame:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
 frame:RegisterEvent("GUILDBANK_UPDATE_TABS")
 frame:RegisterEvent("GUILDBANK_ITEM_LOCK_CHANGED")
 frame:RegisterEvent("PLAYER_MONEY")
+frame:RegisterEvent("ADDON_LOADED")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 -- Simple throttles
 local pendingBagScan, bagScanAt = false, 0
 local pendingRealmScan, realmScanAt = false, 0
+local goldHookDone, goldHookTries, goldHookNext = false, 0, 0
 
 local function RequestBagScan()
   pendingBagScan = true
@@ -500,16 +506,25 @@ frame:SetScript("OnUpdate", function()
     pendingMoney = false
     StoreMyMoney()
   end
+
+  -- Retry hooking AdiBags coin buttons for a short time after login/UI loads
+  if (not goldHookDone) and GetTime() >= goldHookNext and goldHookTries < 30 then
+    goldHookTries = goldHookTries + 1
+    goldHookDone = HookGoldFrame() or false
+    goldHookNext = GetTime() + 0.5
+  end
 end)
 
-frame:SetScript("OnEvent", function(_, event)
+frame:SetScript("OnEvent", function(_, event, arg1)
   if event == "PLAYER_LOGIN" then
     UpdateProfessionList()
     GameTooltip:HookScript("OnTooltipSetItem", AddTooltipInfo)
 
     RequestBagScan()
     StoreMyMoney()
-    HookGoldFrame()
+    goldHookDone = HookGoldFrame() or false
+    goldHookTries = 0
+    goldHookNext = GetTime() + 0.5
     if not _G.ALTTRACKER_OPTIONS_INIT then
       _G.ALTTRACKER_OPTIONS_INIT = true
       CreateOptionsPanel()
@@ -534,7 +549,30 @@ frame:SetScript("OnEvent", function(_, event)
 
   if event == "PLAYER_MONEY" then
     RequestMoneyStore()
-    HookGoldFrame()
+    if not goldHookDone then
+      goldHookDone = HookGoldFrame() or false
+    end
+    return
+  end
+
+  if event == "ADDON_LOADED" then
+    local addon = arg1
+    if addon == "AdiBags" then
+      if not goldHookDone then
+        goldHookDone = HookGoldFrame() or false
+        goldHookTries = 0
+        goldHookNext = GetTime() + 0.2
+      end
+    end
+    return
+  end
+
+  if event == "PLAYER_ENTERING_WORLD" then
+    if not goldHookDone then
+      goldHookDone = HookGoldFrame() or false
+      goldHookTries = 0
+      goldHookNext = GetTime() + 0.2
+    end
     return
   end
 
