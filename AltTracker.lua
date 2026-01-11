@@ -28,12 +28,13 @@ end
 local function EnsureCharacterData()
   local key = GetCharacterKey()
   if not AltTrackerDB.characters[key] then
-    AltTrackerDB.characters[key] = { professions = {}, bags = {}, bank = {}, name = (UnitName("player") or "Unknown"), money = 0 }
+    AltTrackerDB.characters[key] = { professions = {}, bags = {}, bank = {}, pbank = {}, name = (UnitName("player") or "Unknown"), money = 0 }
   end
   local cd = AltTrackerDB.characters[key]
   cd.professions = cd.professions or {}
   cd.bags = cd.bags or {}
   cd.bank = cd.bank or {}
+  cd.pbank = cd.pbank or {}
   cd.name = cd.name or (UnitName("player") or "Unknown")
   cd.money = tonumber(cd.money) or 0
   cd.enabled = (cd.enabled ~= false)
@@ -44,10 +45,12 @@ end
 local function EnsureRealmData()
   AltTrackerDB.realm = AltTrackerDB.realm or {}
   local rk = RealmKey()
-  AltTrackerDB.realm[rk] = AltTrackerDB.realm[rk] or { counts = {}, lastScan = 0 }
+  AltTrackerDB.realm[rk] = AltTrackerDB.realm[rk] or { rbank = {}, lastScan = 0, lastScanPersonal = 0 }
   local rd = AltTrackerDB.realm[rk]
-  rd.counts = rd.counts or {}
+  rd.rbank = rd.rbank or rd.counts or {}
+  rd.counts = rd.rbank -- backward compat alias
   rd.lastScan = rd.lastScan or 0
+  rd.lastScanPersonal = rd.lastScanPersonal or 0
   return rd
 end
 
@@ -338,11 +341,53 @@ end
 ------------------------------------------------------------
 -- Realm Bank (Ascension Realm Bank uses GuildBankFrame)
 ------------------------------------------------------------
-local function ScanRealmBank()
-  if not GuildBankFrame or not GuildBankFrame:IsShown() then return end
+local function DetectAscensionBankMode()
+  -- Ascension uses GuildBankFrame for both banks.
+  -- Reliable detection strategy:
+  --  1) If ANY visible text on the frame contains "personal" => Personal Bank
+  --  2) If ANY visible text on the frame contains "realm bank" or "daily withdrawals" => Realm Bank
+  --
+  -- Reason: the title fontstring is not always the same between the two UIs, but the Realm Bank UI
+  -- usually has an extra line like "Remaining Daily Withdrawals for Realm Bank".
+  local function CheckText(s)
+    if not s or s == "" then return nil end
+    local t = string.lower(s)
+    if t:find("personal") then return "personal" end
+    if t:find("realm bank") or t:find("daily withdrawals") or t:find("warband") then return "realm" end
+    return nil
+  end
 
-  local rd = EnsureRealmData()
-  WipeTable(rd.counts)
+  -- Check common title objects first
+  local title = ""
+  if _G.GuildBankFrameTitleText and _G.GuildBankFrameTitleText.GetText then
+    title = _G.GuildBankFrameTitleText:GetText() or ""
+    local r = CheckText(title)
+    if r then return r end
+  end
+
+  -- Scan all fontstrings on the frame for reliable markers
+  if _G.GuildBankFrame and _G.GuildBankFrame.GetRegions then
+    local regions = { _G.GuildBankFrame:GetRegions() }
+    for i = 1, #regions do
+      local region = regions[i]
+      if region and region.GetObjectType and region:GetObjectType() == "FontString" and region.GetText then
+        local r = CheckText(region:GetText())
+        if r then return r end
+      end
+    end
+  end
+
+  -- Fallback: if we couldn't find markers, assume realm (safer for your use-case)
+  return "realm"
+end
+
+
+
+local function ScanGuildBankInto(targetCounts)
+  if not GuildBankFrame or not GuildBankFrame:IsShown() then return end
+  if not targetCounts then return end
+
+  WipeTable(targetCounts)
 
   local numTabs = GetNumGuildBankTabs() or 0
   local SLOTS_PER_TAB = 98
@@ -352,17 +397,31 @@ local function ScanRealmBank()
       local link = GetGuildBankItemLink(tab, slot)
       if link then
         local itemID = ItemIDFromLink(link)
-        local _, count = GetGuildBankItemInfo(tab, slot) -- texture, count, locked
-        AddCount(rd.counts, itemID, count or 1)
+        local _, count = GetGuildBankItemInfo(tab, slot)
+        AddCount(targetCounts, itemID, count or 1)
       end
     end
   end
+end
 
-  rd.lastScan = time()
+local function ScanAscensionBank()
+  if not GuildBankFrame or not GuildBankFrame:IsShown() then return end
+
+  local mode = DetectAscensionBankMode()
+  if mode == "personal" then
+    local cd = EnsureCharacterData()
+    ScanGuildBankInto(cd.pbank)
+    local rd = EnsureRealmData()
+    rd.lastScanPersonal = time()
+  else
+    local rd = EnsureRealmData()
+    ScanGuildBankInto(rd.rbank)
+    rd.lastScan = time()
+  end
 end
 
 ------------------------------------------------------------
--- Tooltip: professions + realm bank + alts (sorted) + spacer
+-- Tooltip: professions + realm bank + alts (sorted) + spacer professions + realm bank + alts (sorted) + spacer
 ------------------------------------------------------------
 local function BuildAltCountLines(itemID)
   local lines = {}
@@ -375,10 +434,11 @@ local function BuildAltCountLines(itemID)
     local name = characterData.name or (characterKey:match("^[^-]+") or characterKey)
     local bags = (characterData.bags and characterData.bags[itemID]) or 0
     local bank = (characterData.bank and characterData.bank[itemID]) or 0
-    local total = bags + bank
+    local pbank = (characterData.pbank and characterData.pbank[itemID]) or 0
+    local total = bags + bank + pbank
     if total > 0 then
       altsTotal = altsTotal + total
-      lines[#lines + 1] = { name = name, total = total, bags = bags, bank = bank }
+      lines[#lines + 1] = { name = name, total = total, bags = bags, bank = bank, pbank = pbank }
     end
     end
   end
@@ -429,7 +489,9 @@ local function AddTooltipInfo(tooltip)
   local altLines, altsTotal = BuildAltCountLines(itemID)
 
   local rd = EnsureRealmData()
-  local realmBank = tonumber((rd.counts and rd.counts[itemID]) or 0) or 0
+  local realmBank = tonumber((rd.rbank and rd.rbank[itemID]) or (rd.counts and rd.counts[itemID]) or 0) or 0
+  local cd = EnsureCharacterData()
+  local personalBank = tonumber((cd.pbank and cd.pbank[itemID]) or 0) or 0
   local grandTotal = (tonumber(altsTotal) or 0) + realmBank
 
   if foundProf or #altLines > 0 or realmBank > 0 then
@@ -444,7 +506,7 @@ local function AddTooltipInfo(tooltip)
       local a = altLines[i]
       tooltip:AddDoubleLine(
         "  " .. a.name .. ":",
-        string.format("%d (%d bags, %d bank)", a.total, a.bags, a.bank),
+        string.format("%d (%d bags, %d bank, %d pbank)", a.total, a.bags, a.bank, (a.pbank or 0)),
         0.75, 0.75, 0.75,
         0.75, 0.75, 0.75
       )
@@ -499,7 +561,7 @@ frame:SetScript("OnUpdate", function()
   end
   if pendingRealmScan and GetTime() >= realmScanAt then
     pendingRealmScan = false
-    ScanRealmBank()
+    ScanAscensionBank()
   end
   if pendingMoney and GetTime() >= moneyAt then
     pendingMoney = false
