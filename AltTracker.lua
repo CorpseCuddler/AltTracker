@@ -405,6 +405,29 @@ local function ScanGuildBankInto(targetCounts)
   end
 end
 
+local function GetGuildVaultMoneyCopper()
+  if not GuildBankFrame or not GuildBankFrame:IsShown() then return 0 end
+
+  local money
+
+  -- Direct API on many clients.
+  if type(_G.GetGuildBankMoney) == "function" then
+    money = _G.GetGuildBankMoney()
+  end
+
+  -- Modern API fallback (if present on target build).
+  if money == nil and _G.C_GuildBank and type(_G.C_GuildBank.GetGuildBankMoney) == "function" then
+    money = _G.C_GuildBank.GetGuildBankMoney()
+  end
+
+  -- Safe UI fallback when API is unavailable.
+  if money == nil and _G.GuildBankFrame and _G.GuildBankFrame.money then
+    money = _G.GuildBankFrame.money
+  end
+
+  return tonumber(money) or 0
+end
+
 local function ScanAscensionBank()
   if not GuildBankFrame or not GuildBankFrame:IsShown() then return end
 
@@ -417,6 +440,7 @@ local function ScanAscensionBank()
   else
     local rd = EnsureRealmData()
     ScanGuildBankInto(rd.rbank)
+    rd.rbankMoney = tonumber(GetGuildVaultMoneyCopper()) or 0
     rd.lastScan = time()
   end
 end
@@ -857,5 +881,4 @@ SLASH_ALTTRACKER2 = "/at"
 SlashCmdList["ALTTRACKER"] = function()
   OpenAltTrackerConfig()
 end
-
 
