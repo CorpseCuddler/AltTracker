@@ -10,7 +10,7 @@ local CreateOptionsPanel
 
 -- Extended DB:
 --  AltTrackerDB.characters[ "Name-Realm" ] = { professions = {...}, neededItems = {...}, bags = {...}, bank = {...}, money = <copper>, name = "Name" }
---  AltTrackerDB.realm[ "Realm" ] = { counts = {...}, lastScan = 0 }
+--  AltTrackerDB.realm[ "Realm" ] = { counts = {...}, rbankMoney = <copper>, lastScan = 0 }
 
 ------------------------------------------------------------
 -- Keys / storage
@@ -45,10 +45,11 @@ end
 local function EnsureRealmData()
   AltTrackerDB.realm = AltTrackerDB.realm or {}
   local rk = RealmKey()
-  AltTrackerDB.realm[rk] = AltTrackerDB.realm[rk] or { rbank = {}, lastScan = 0, lastScanPersonal = 0 }
+  AltTrackerDB.realm[rk] = AltTrackerDB.realm[rk] or { rbank = {}, rbankMoney = 0, lastScan = 0, lastScanPersonal = 0 }
   local rd = AltTrackerDB.realm[rk]
   rd.rbank = rd.rbank or rd.counts or {}
   rd.counts = rd.rbank -- backward compat alias
+  rd.rbankMoney = tonumber(rd.rbankMoney) or 0
   rd.lastScan = rd.lastScan or 0
   rd.lastScanPersonal = rd.lastScanPersonal or 0
   return rd
@@ -724,7 +725,7 @@ CreateOptionsPanel = function()
 
   local confirmText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
   confirmText:SetPoint("TOPLEFT", purgeBtn, "BOTTOMLEFT", 0, -6)
-  confirmText:SetText("Purging deletes saved items, bank, professions, and gold for that character.")
+  confirmText:SetText("Purging deletes saved items, bank, professions, and gold (including realm bank vault gold) for that character.")
 
   local selectedKey = nil
 
@@ -775,7 +776,7 @@ CreateOptionsPanel = function()
     local name = CharDisplayName(selectedKey, cd)
 
     StaticPopupDialogs["ALTTRACKER_PURGE_CHAR"] = {
-      text = "Purge ALL AltTracker data for |cffffd200" .. name .. "|r?\n\nThis will permanently delete:\n  • Profession tracking + needed items\n  • Bag + bank item counts\n  • Gold totals\n\nThis cannot be undone.",
+      text = "Purge ALL AltTracker data for |cffffd200" .. name .. "|r?\n\nThis will permanently delete:\n  • Profession tracking + needed items\n  • Bag + bank item counts\n  • Gold totals (including realm bank vault gold)\n\nThis cannot be undone.",
       button1 = "Purge",
       button2 = CANCEL,
       OnAccept = function()
