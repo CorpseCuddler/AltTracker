@@ -120,17 +120,31 @@ local function GetAllAltMoney()
 end
 
 local function ShowGoldTooltip(owner)
+  local rd = EnsureRealmData()
+  local vault = tonumber(rd.rbankMoney) or 0
+
   local tip = GameTooltip
   tip:SetOwner(owner, "ANCHOR_TOPLEFT")
   tip:ClearLines()
   tip:AddLine("AltTracker Gold", 1, 1, 1)
 
-  local list, total = GetAllAltMoney()
-  tip:AddDoubleLine("Total:", FormatMoney(total), 1, 1, 1, 0.8, 0.8, 0.8)
+  local list, characterTotal = GetAllAltMoney()
+  local grandTotal = characterTotal + vault
 
   for i = 1, math.min(#list, 30) do
     tip:AddDoubleLine(list[i].name .. ":", FormatMoney(list[i].money), 0.75, 0.75, 0.75, 0.75, 0.75, 0.75)
   end
+
+  tip:AddLine(" ")
+  tip:AddDoubleLine("Characters Total:", FormatMoney(characterTotal), 1, 1, 1, 0.8, 0.8, 0.8)
+  tip:AddDoubleLine("Guild/Realm Vault:", FormatMoney(vault), 1, 1, 1, 0.8, 0.8, 0.8)
+  tip:AddDoubleLine("Grand Total:", FormatMoney(grandTotal), 1, 1, 1, 1, 1, 0.3)
+
+  if rd.lastScan and rd.lastScan > 0 then
+    tip:AddLine(" ")
+    tip:AddLine(string.format("Vault scan: %s", date("%Y-%m-%d %H:%M", rd.lastScan)), 0.65, 0.65, 0.65)
+  end
+
   tip:Show()
 end
 
@@ -881,4 +895,3 @@ SLASH_ALTTRACKER2 = "/at"
 SlashCmdList["ALTTRACKER"] = function()
   OpenAltTrackerConfig()
 end
-
